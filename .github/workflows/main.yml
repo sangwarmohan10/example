@@ -1,0 +1,66 @@
+name: .NET CI with SonarQube
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Set up .NET Core
+      uses: actions/setup-dotnet@v2
+      with:
+        dotnet-version: '6.0.x'  # Change to your .NET version
+
+    - name: Restore dependencies
+      run: dotnet restore
+
+    - name: Build
+      run: dotnet build --no-restore --configuration Release
+
+    - name: Install SonarQube Scanner
+      run: dotnet tool install --global dotnet-sonarscanner
+
+    - name: Run SonarQube Scanner
+      env:
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      run: dotnet-sonarscanner begin /k:"your-project-key" /d:sonar.login="${{ secrets.SONAR_TOKEN }}" /d:sonar.host.url="https://sonarcloud.io"
+
+    - name: Build for SonarQube Analysis
+      run: dotnet build
+
+    - name: Complete SonarQube Analysis
+      run: dotnet-sonarscanner end /d:sonar.login="${{ secrets.SONAR_TOKEN }}"
+
+  quality-gate:
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Wait for SonarQube analysis
+      uses: actions/github-script@v6
+      id: get-status
+      with:
+        script: |
+          const response = await github.rest.checks.listForRef({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            ref: context.sha,
+          });
+          return response.data.find(check => check.app.slug === 'sonarcloud');
+
+    - name: SonarQube Quality Gate
+      if: ${{ steps.get-status.outputs.conclusion != 'success' }}
+      run: exit 1
